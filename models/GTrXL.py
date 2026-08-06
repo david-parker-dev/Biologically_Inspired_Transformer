@@ -52,11 +52,11 @@ class Gated_Residual_Layer(nn.Module):
         # Update Weights
         self.Wz = nn.Linear(embed_dim, embed_dim, bias=False)
         self.Uz = nn.Linear(embed_dim, embed_dim)
-
-        # Update Bias Setup
         nn.init.zeros_(self.Wz.weight)
         nn.init.zeros_(self.Uz.weight)
-        nn.init.constant_(self.Uz.bias, initial_bias)  # b(1)g
+
+        # Update Bias
+        nn.init.constant_(self.Uz.bias, initial_bias)
 
         # Candidate State
         self.Wg = nn.Linear(embed_dim, embed_dim, bias=False)

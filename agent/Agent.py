@@ -5,7 +5,7 @@ import torch
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 
-from agent.Rollout_Buffer import rollout_buffer
+from agent.Rollout_Buffer import RolloutBuffer
 from models.Model import Model
 
 
@@ -32,7 +32,7 @@ class Agent:
         self.Optimiser = optim.AdamW(self.Network.parameters(), lr=self.config.LEARNING_RATE, amsgrad=False)
 
         self.writer = SummaryWriter(log_dir="runs/" + self.config.RUN_NAME)
-        self.rollout_buffer = rollout_buffer(self.config, self.num_observations)
+        self.RolloutBuffer = RolloutBuffer(self.config, self.num_observations)
         self.global_step = 0
 
         self.observation, _ = self.env.reset()
@@ -47,7 +47,7 @@ class Agent:
             bootstrap_value, last_done = self.fill_rollout()
 
             # Compute Advantages/Returns
-            self.rollout_buffer.compute_gae(bootstrap_value, last_done)
+            self.RolloutBuffer.compute_gae(bootstrap_value, last_done)
 
             # PPO Update
             self.update()
@@ -103,7 +103,7 @@ class Agent:
             last_done = done
 
             # Store Collected Data in Rollout Buffer
-            self.rollout_buffer.store(timestep, self.observation, action, reward, critic_value, log_probability, done)
+            self.RolloutBuffer.store(timestep, self.observation, action, reward, critic_value, log_probability, done)
 
             self.episode_timestep += 1
             self.episode_return += reward
@@ -138,7 +138,7 @@ class Agent:
         for epoch in range(self.config.EPOCHS):
 
             memory = None
-            batches = self.rollout_buffer.get_sequence_batches(sequence_length=self.config.SEQUENCE_LENGTH)
+            batches = self.RolloutBuffer.get_sequence_batches(sequence_length=self.config.SEQUENCE_LENGTH)
 
             for batch in batches:
 
