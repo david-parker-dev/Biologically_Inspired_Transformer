@@ -41,37 +41,42 @@ class GTrXL_Block(nn.Module):
 
 
 class Gated_Residual_Layer(nn.Module):
-    # Inputs:
-    # Residual Connection (x)
-    # Layer Output (y)
-
-    # Gating:
-    # Reset Gate (r)         = σ(Wr y + Ur x)
-    # Update Gate (z)        = σ(Wz y + Uz x − b(l)g)
-    # Candidate State (h)    = tanh(Wg y + Ug (r⊙x))
-    # GRU(x, y)              = (1 − z) x + z⊙h
 
     def __init__(self, embed_dim, initial_bias=-2.0):
         super().__init__()
-        self.reset_gate = nn.Linear(embed_dim * 2, embed_dim)
-        self.update_gate = nn.Linear(embed_dim * 2, embed_dim)
-        self.candidate_state_gate = nn.Linear(embed_dim * 2, embed_dim)
 
-        # Set weights to zero so it doesnt overrule bias
-        # Set Bias low to limit noise from unoptimised layer noise
-        nn.init.zeros_(self.update_gate.weight)
-        nn.init.constant_(self.update_gate.bias, initial_bias)
+        # Reset Weights -
+        self.Wr = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.Ur = nn.Linear(embed_dim, embed_dim, bias=False)
+
+        # Update Weights
+        self.Wz = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.Uz = nn.Linear(embed_dim, embed_dim)
+
+        # Update Bias Setup
+        nn.init.zeros_(self.Wz.weight)
+        nn.init.zeros_(self.Uz.weight)
+        nn.init.constant_(self.Uz.bias, initial_bias)  # b(1)g
+
+        # Candidate State
+        self.Wg = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.Ug = nn.Linear(embed_dim, embed_dim, bias=False)
 
     def forward(self, Residual_Connection, Layer_Output):
+        # Residual Connection (x)
+        # Layer Output (y)
 
-        combined = torch.cat([Residual_Connection, Layer_Output], dim=-1)
-        r = torch.sigmoid(self.reset_gate(combined))  # Reset Gate (r)
-        z = torch.sigmoid(self.update_gate(combined)) # Update Gate (z)
+        # Reset Gate (r) = σ(Wr y + Ur x)
+        r = torch.sigmoid(self.Wr(Layer_Output) + self.Ur(Residual_Connection))
 
-        combined = torch.cat([(Residual_Connection * r), Layer_Output], dim=-1) # Candidate State (h)
-        h = torch.tanh(self.candidate_state_gate(combined))
+        # Update Gate (z) = σ(Wz y + Uz x − b(l)g)
+        z = torch.sigmoid(self.Wz(Layer_Output) + self.Uz(Residual_Connection))
 
-        return ((1 - z) * Residual_Connection) + (z * h) # Apply GRU
+        # Candidate State (h) = tanh(Wg y + Ug (r⊙x))
+        h = torch.tanh(self.Wg(Layer_Output) + self.Ug(r * Residual_Connection))
+
+        # GRU(x, y) = (1 − z) x + z⊙h
+        return ((1 - z) * Residual_Connection) + (z * h)
 
 
 class MultiheadAttention(nn.Module):
