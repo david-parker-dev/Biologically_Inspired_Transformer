@@ -5,15 +5,15 @@ from dataclasses import dataclass
 class config:
 
     # TensorBoard
-    RUN_NAME: str = "Sparse - RPE"
+    RUN_NAME: str = "Cartpole"
     EVAL_FREQUENCY: int = 5
 
     # Trunk / Model Architecture
     MODEL_INPUT_SIZE: int = 4
     MODEL_NUM_ACTIONS: int = 2
     MODEL_EMBED_SIZE: int = 512
-    MODEL_LAYERS: int = 6
-    MAX_MEMORY_LENGTH: int = 128
+    MODEL_LAYERS: int = 3
+    MAX_MEMORY_LENGTH: int = 64
 
     # PPO
     LEARNING_RATE: float = 10 ** -5

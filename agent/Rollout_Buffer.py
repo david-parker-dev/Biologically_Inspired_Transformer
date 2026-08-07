@@ -51,7 +51,7 @@ class RolloutBuffer:
             else:
                 next_value = self.critic_values[timestep + 1]
 
-            next_done = self.dones[timestep]
+            next_done = self.dones[timestep].float()
 
             # TD Error = Reward(t) + (Discount_Factor * Value(t+1)) - Critic_Value(t)
             TD_error = self.rewards[timestep] + (self.gamma * next_value * (1 - next_done)) - self.critic_values[timestep]
