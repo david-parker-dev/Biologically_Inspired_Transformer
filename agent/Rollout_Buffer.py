@@ -5,23 +5,13 @@ class RolloutBuffer:
     # Collects State Transitions for PPO Training
     # Returns a rollout of state transitions
 
-    # Transition Design
-        # ((Obs_1, Obs_2, ..., Obs_x), action, log_probability, reward, critic_value, done)
-    # Rollout tensors have space
-        # observations      = [Rollout_Size, Observation_Size]
-        # actions           = [Rollout_Size]
-        # log_probabilties  = [Rollout_Size]
-        # rewards           = [Rollout_Size]
-        # critic_values     = [Rollout_Size]
-        # dones             = [Rollout_Size]
-
-    def __init__(self, config, obs_shape):
+    def __init__(self, config, image_shape):
 
         # Defines Device to be used - GPU(Cuda) or CPU
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Parameters
-        self.obs_shape = obs_shape
+        self.image_shape = image_shape
 
         # Hyperparameters
         self.gamma = config.GAMMA
@@ -31,10 +21,11 @@ class RolloutBuffer:
         self.clear()
 
 
-    def store(self, step, observation, action, reward, critic_value, log_probability, done):
+    def store(self, step, image, direction, action, reward, critic_value, log_probability, done):
 
         # Append Collected Transition Values
-        self.observations[step]      = torch.as_tensor(observation, dtype=torch.float32, device=self.device)
+        self.images[step]            = torch.as_tensor(image, dtype=torch.float32, device=self.device)
+        self.directions[step]        = torch.as_tensor(direction, dtype=torch.int64, device=self.device)
         self.actions[step]           = action
         self.log_probabilities[step] = log_probability
         self.rewards[step]           = reward
@@ -51,7 +42,7 @@ class RolloutBuffer:
             else:
                 next_value = self.critic_values[timestep + 1]
 
-            next_done = self.dones[timestep]
+            next_done = self.dones[timestep].float()
 
             # TD Error = Reward(t) + (Discount_Factor * Value(t+1)) - Critic_Value(t)
             TD_error = self.rewards[timestep] + (self.gamma * next_value * (1 - next_done)) - self.critic_values[timestep]
@@ -81,7 +72,8 @@ class RolloutBuffer:
             end = start + sequence_length
 
             yield (
-                self.observations      [start:end].unsqueeze(0),
+                self.images            [start:end].unsqueeze(0),
+                self.directions        [start:end].unsqueeze(0),
                 self.actions           [start:end].unsqueeze(0),
                 self.log_probabilities [start:end].unsqueeze(0),
                 normalised_advantage   [start:end].unsqueeze(0),
@@ -92,7 +84,8 @@ class RolloutBuffer:
 
 
     def clear(self):
-        self.observations = torch.zeros(self.rollout_size, *self.obs_shape, dtype=torch.float32, device=self.device)
+        self.images = torch.zeros(self.rollout_size, *self.image_shape, dtype=torch.float32, device=self.device)
+        self.directions = torch.zeros(self.rollout_size, dtype=torch.int64, device=self.device)
         self.actions = torch.zeros(self.rollout_size, dtype=torch.int64, device=self.device)
         self.log_probabilities = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
         self.rewards = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)

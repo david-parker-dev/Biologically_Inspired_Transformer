@@ -9,21 +9,24 @@ class GTrXL_Block(nn.Module):
     # Structure of a GTrXL Block
     # Features two stages of processing, and add gating to the residiual connections
 
-    def __init__(self, embed_dim, num_heads, hidden_dim, max_sequence_length, max_memory_length):
+    def __init__(self, config):
         super().__init__()
 
-        self.an1 = MultiheadAttention(embed_dim, num_heads, max_sequence_length=max_sequence_length, max_memory_length=max_memory_length, enable_mask=True)
+        self.config = config
+        embed_dim = config.MODEL_EMBED_SIZE
+
+        self.an1 = MultiheadAttention(config, enable_mask=True)
 
         self.activation = F.gelu
 
         self.layer_norm_1 = nn.LayerNorm(embed_dim)
         self.layer_norm_2 = nn.LayerNorm(embed_dim)
 
-        self.Residual_Gate_1 = Gated_Residual_Layer(embed_dim)
-        self.Residual_Gate_2 = Gated_Residual_Layer(embed_dim)
+        self.Residual_Gate_1 = Gated_Residual_Layer(embed_dim, config.GRU_GATE_INITIAL_BIAS)
+        self.Residual_Gate_2 = Gated_Residual_Layer(embed_dim, config.GRU_GATE_INITIAL_BIAS)
 
-        self.fc1 = nn.Linear(embed_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, embed_dim)
+        self.fc1 = nn.Linear(embed_dim, config.MODEL_HIDDEN_DIM)
+        self.fc2 = nn.Linear(config.MODEL_HIDDEN_DIM, embed_dim)
 
     def forward(self, x, past_input=None):
 
@@ -39,10 +42,9 @@ class GTrXL_Block(nn.Module):
         x = self.Residual_Gate_2(x, x_output)
         return x, new_memory
 
-
 class Gated_Residual_Layer(nn.Module):
 
-    def __init__(self, embed_dim, initial_bias=-2.0):
+    def __init__(self, embed_dim, initial_bias):
         super().__init__()
 
         # Reset Weights -
@@ -80,21 +82,22 @@ class Gated_Residual_Layer(nn.Module):
 
 
 class MultiheadAttention(nn.Module):
-    def __init__(self, d_model, num_heads, enable_mask, max_sequence_length, max_memory_length):
+    def __init__(self,config, enable_mask):
         super().__init__()
 
-        self.d_model = d_model  # Model Embedding Size
-        self.num_heads = num_heads  # Number of Heads
-        self.head_dim = d_model // num_heads  # Dimensionality of each head
-        self.enable_mask = enable_mask  # Toggles Causal Mask
-        self.max_sequence_length = max_sequence_length
-        self.max_memory_length = max_memory_length
+        self.config = config
+        self.model_dim_size = config.MODEL_EMBED_SIZE
+        self.num_heads = config.MODEL_NUM_HEADS
+        self.head_dim = self.model_dim_size // self.num_heads
+        self.enable_mask = enable_mask
+        self.max_sequence_length = config.SEQUENCE_LENGTH
+        self.max_memory_length = config.MAX_MEMORY_LENGTH
 
         # Query, Key, and Value Layers
-        self.q_layer = nn.Linear(d_model, d_model)
-        self.k_E_layer = nn.Linear(d_model, d_model) # W_k,E
-        self.v_layer = nn.Linear(d_model, d_model)
-        self.k_R_layer = nn.Linear(d_model, d_model, bias=False)
+        self.q_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
+        self.k_E_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
+        self.v_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
+        self.k_R_layer = nn.Linear(self.model_dim_size, self.model_dim_size, bias=False)
 
         # Positional Encoding Parameters
         self.u = nn.Parameter(torch.empty(self.num_heads, 1, self.head_dim))
@@ -103,7 +106,7 @@ class MultiheadAttention(nn.Module):
         nn.init.xavier_uniform_(self.v)
 
         # Combines heads into final hidden layer
-        self.linear_layer = nn.Linear(d_model, d_model)
+        self.linear_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
 
     def _rel_shift(self, x, zero_triu=False):
         batch_size, n_head, query_len, key_len = x.size()
@@ -118,12 +121,12 @@ class MultiheadAttention(nn.Module):
         # Slice off the top row and restore original shape
         return x_padded[:, :, 1:].view_as(x)
 
-    def relative_positional_embeddings(self, seq_len, d_model, device):
-        inv_freq = 1 / (10000 ** (torch.arange(0.0, d_model, 2.0, device=device) / d_model))
+    def relative_positional_embeddings(self, seq_len, model_dim_size, device):
+        inv_freq = 1 / (10000 ** (torch.arange(0.0, model_dim_size, 2.0, device=device) / model_dim_size))
         pos_seq = torch.arange(seq_len - 1, -1, -1.0, device=device)
         sinusoid_inp = torch.ger(pos_seq, inv_freq)
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
-        return pos_emb.unsqueeze(1) # [seq_len, 1, d_model]
+        return pos_emb.unsqueeze(1) # [seq_len, 1, model_dim_size]
 
     def build_causal_mask(self, query_length, cache_length, device):
         cache_mask = torch.zeros(query_length, cache_length, device=device)
@@ -186,8 +189,8 @@ class MultiheadAttention(nn.Module):
         v = self.v_layer(extended_input)
 
         # Relative Positional Key (k_R)
-        positional_embedding = self.relative_positional_embeddings(context_length, self.d_model, x.device)
-        k_R = self.k_R_layer(positional_embedding) # shape: [context_length, 1, d_model]
+        positional_embedding = self.relative_positional_embeddings(context_length, self.model_dim_size, x.device)
+        k_R = self.k_R_layer(positional_embedding) # shape: [context_length, 1, model_dim_size]
 
         # Split Each into Head Shapes
         q = self.split_heads(q, batch_size, sequence_length)
