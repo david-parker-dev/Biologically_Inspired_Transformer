@@ -22,7 +22,6 @@ def main():
 
     set_RNG(config.SEED)
 
-
     agent = Agent(
             config=config,
             num_actions=env.action_space.n,

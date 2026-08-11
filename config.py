@@ -5,7 +5,7 @@ from dataclasses import dataclass
 class config:
 
     # TensorBoard
-    RUN_NAME: str = "Default"
+    RUN_NAME: str = "Sparse_Env"
 
     # Environment
     # ENV_NAME: str = "MiniGrid-Empty-8x8-v0"
