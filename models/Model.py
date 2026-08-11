@@ -70,7 +70,7 @@ class Model(nn.Module):
         self.Actor = Actor(config.MODEL_EMBED_SIZE, num_actions)
         self.Critic = Critic(config.MODEL_EMBED_SIZE)
 
-    def forward(self, image, direction, memory=None):
+    def forward(self, image, direction, memory=None, position_offset=0):
 
         x = self.Encoder(image, direction)
 
@@ -79,7 +79,7 @@ class Model(nn.Module):
 
         new_memory = []
         for block, past_input in zip(self.blocks, memory):
-            x, block_memory = block(x, past_input=past_input)
+            x, block_memory = block(x, past_input=past_input, position_offset=position_offset)
             new_memory.append(block_memory)
 
         return self.Critic(x), self.Actor(x), new_memory
