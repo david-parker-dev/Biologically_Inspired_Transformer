@@ -25,7 +25,9 @@ class Agent:
         self.RolloutBuffer = RolloutBuffer(self.config, image_shape=(config.INPUT_GRID_SIZE, config.INPUT_GRID_SIZE, 3))
         self.global_step = 0
 
-        self.observation, _ = self.env.reset()
+        self.eval_env = gym.make(self.config.ENV_NAME)
+
+        self.observation, _ = self.env.reset(seed=self.config.SEED)
         self.episode_timestep = 0
         self.episode_return = 0.0
         self.memory = None
@@ -175,12 +177,15 @@ class Agent:
         episode_returns = []
         episode_lengths = []
         episode_successes = []
-        eval_env = gym.make(self.config.ENV_NAME)
 
         training_memory = self.memory
 
-        for _ in range(self.config.EVAL_EPISODES):
-            observation, _ = eval_env.reset()
+        for episode in range(self.config.EVAL_EPISODES):
+            if episode == 0:
+                observation, _ = self.eval_env.reset(seed=self.config.EVAL_SEED)
+            else:
+                observation, _ = self.eval_env.reset()
+
             done = False
             total_reward = 0.0
             steps = 0
@@ -188,7 +193,7 @@ class Agent:
 
             while not done and steps < self.episode_max_length:
                 action, _, _ = self.select_action(observation, eval=True)
-                observation, reward, terminated, truncated, _ = eval_env.step(action.item())
+                observation, reward, terminated, truncated, _ = self.eval_env.step(action.item())
                 done = terminated or truncated
                 total_reward += reward
                 steps += 1

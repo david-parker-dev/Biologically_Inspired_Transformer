@@ -11,6 +11,8 @@ class config:
     # ENV_NAME: str = "MiniGrid-Empty-8x8-v0"
     ENV_NAME: str = "MiniGrid-MemoryS13-v0"
     EPISODE_MAX_LENGTH: int = 845
+    SEED: int = 7
+    EVAL_SEED: int = 212
 
     # Encoder
     INPUT_CONV_CHANNELS: int = 16
@@ -19,12 +21,11 @@ class config:
     INPUT_NUM_DIRECTIONS: int = 4
 
     # Trunk / Model Architecture
-    MODEL_INPUT_SIZE: int = 4
-    MODEL_EMBED_SIZE: int = 512
-    MODEL_HIDDEN_DIM: int = 2048
-    MODEL_LAYERS: int = 6
-    MODEL_NUM_HEADS: int = 8
-    MAX_MEMORY_LENGTH: int = 256
+    MODEL_EMBED_SIZE: int = 160
+    MODEL_HIDDEN_DIM: int = 640
+    MODEL_LAYERS: int = 4
+    MODEL_NUM_HEADS: int = 4
+    MAX_MEMORY_LENGTH: int = 126
     GRU_GATE_INITIAL_BIAS: float = -2.0
 
     # Evaluation
