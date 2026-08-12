@@ -2,10 +2,9 @@ import math
 
 import torch
 import torch.nn.functional as F
-from torch import nn
 from entmax import entmax_bisect
-
 from models.RoPE import RotaryPositionalEmbeddings
+from torch import nn
 
 
 class GTrXL_Block(nn.Module):
@@ -17,8 +16,9 @@ class GTrXL_Block(nn.Module):
 
         self.config = config
         embed_dim = config.MODEL_EMBED_SIZE
+        enable_sparsity = config.ENABLE_SPARSITY
 
-        self.an1 = MultiheadAttention(config, enable_mask=True)
+        self.an1 = MultiheadAttention(config, enable_mask=True, enable_sparsity= enable_sparsity)
 
         self.activation = F.gelu
 
@@ -83,15 +83,15 @@ class Gated_Residual_Layer(nn.Module):
         # GRU(x, y) = (1 − z) x + z⊙h
         return ((1 - z) * Residual_Connection) + (z * h)
 
-
 class MultiheadAttention(nn.Module):
-    def __init__(self,config, enable_mask):
+    def __init__(self,config, enable_mask, enable_sparsity = False):
         super().__init__()
 
         self.model_dim_size = config.MODEL_EMBED_SIZE
         self.num_heads = config.MODEL_NUM_HEADS
         self.head_dim = self.model_dim_size // self.num_heads
         self.enable_mask = enable_mask
+        self.enable_sparsity = enable_sparsity
         self.max_memory_length = config.MAX_MEMORY_LENGTH
 
         # Query, Key, Value, Final
@@ -102,7 +102,8 @@ class MultiheadAttention(nn.Module):
 
         self.positional_encoder = RotaryPositionalEmbeddings(self.head_dim)
 
-        self.alpha = nn.Parameter(torch.full((self.num_heads,), -0.4363))
+        if self.enable_sparsity == True:
+            self.alpha = nn.Parameter(torch.full((self.num_heads,), -0.4363))
 
     def build_causal_mask(self, query_length, cache_length, device):
         cache_mask = torch.zeros(query_length, cache_length, device=device)
@@ -122,18 +123,20 @@ class MultiheadAttention(nn.Module):
         key_length = k.size(-2)
         cache_length = key_length - query_length
 
-        dot_product = torch.matmul(q, k.transpose(-1, -2))
-
         # Combine / Scale
+        dot_product = torch.matmul(q, k.transpose(-1, -2))
         scaled = dot_product / math.sqrt(d_k)
 
         mask = self.build_causal_mask(query_length, cache_length, device=q.device)
         scaled = scaled + mask
 
-        # attention_weights = F.softmax(scaled, dim=-1)
-        alpha = 1.0 + F.softplus(self.alpha)          # (num_heads,), always ≥ 1
-        alpha = alpha.view(1, self.num_heads, 1, 1)        # reshape to broadcast over (batch, heads, query, key)
-        attention_weights = entmax_bisect(scaled, alpha, dim=-1)
+        if self.enable_sparsity:
+            alpha = 1.0 + F.softplus(self.alpha)
+            alpha = alpha.view(1, self.num_heads, 1, 1)
+            attention_weights = entmax_bisect(scaled, alpha, dim=-1)
+        else:
+            attention_weights = F.softmax(scaled, dim=-1)
+
         values = torch.matmul(attention_weights, v)
 
         return values, attention_weights

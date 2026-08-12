@@ -7,6 +7,9 @@ class config:
     # TensorBoard
     RUN_NAME: str = "Sparse_Env"
 
+    # Ablation
+    ENABLE_SPARSITY: bool = True
+
     # Environment
     # ENV_NAME: str = "MiniGrid-Empty-8x8-v0"
     ENV_NAME: str = "MiniGrid-MemoryS13-v0"

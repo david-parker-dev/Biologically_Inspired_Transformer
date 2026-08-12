@@ -1,10 +1,9 @@
 import gymnasium as gym
 import torch
-from torch import optim
-from torch.utils.tensorboard import SummaryWriter
-
 from agent.Rollout_Buffer import RolloutBuffer
 from models.Model import Model
+from torch import optim
+from torch.utils.tensorboard import SummaryWriter
 
 
 class Agent:
