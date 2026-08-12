@@ -3,3 +3,4 @@ __pycache__/
 runs/
 *.pt
 *.pth
+profile_output.prof
