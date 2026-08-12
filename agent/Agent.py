@@ -208,7 +208,7 @@ class Agent:
 
             episode_returns.append(total_reward)
             episode_lengths.append(steps)
-            episode_successes.append(1.0 if terminated else 0.0)
+            episode_successes.append(1.0 if (terminated and total_reward > 0) else 0.0)
 
         self.memory = training_memory
 
