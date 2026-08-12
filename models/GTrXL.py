@@ -31,11 +31,11 @@ class GTrXL_Block(nn.Module):
         self.fc1 = nn.Linear(embed_dim, config.MODEL_HIDDEN_DIM)
         self.fc2 = nn.Linear(config.MODEL_HIDDEN_DIM, embed_dim)
 
-    def forward(self, x, past_input=None, position_offset=0):
+    def forward(self, x, past_input=None):
 
         # Stage 1 - Multi Head Self Attention
         x_output = self.layer_norm_1(x)
-        x_output, new_memory = self.an1(x_output, past_input=past_input, position_offset=position_offset)
+        x_output, new_memory = self.an1(x_output, past_input=past_input)
         x = self.Residual_Gate_1(x, x_output)
 
         # Stage 2 - Multi Layer Perceptron
@@ -123,7 +123,7 @@ class MultiheadAttention(nn.Module):
         cache_length = key_length - query_length
 
         dot_product = torch.matmul(q, k.transpose(-1, -2))
-        
+
         # Combine / Scale
         scaled = dot_product / math.sqrt(d_k)
 
@@ -138,7 +138,7 @@ class MultiheadAttention(nn.Module):
 
         return values, attention_weights
 
-    def forward(self, x, past_input=None, position_offset=0):
+    def forward(self, x, past_input=None):
 
         batch_size, sequence_length, _ = x.size()
 
@@ -169,19 +169,19 @@ class MultiheadAttention(nn.Module):
         context_length = k.size(-2)
         query_start = context_length - sequence_length
 
-        q_positions = torch.arange(query_start, query_start + sequence_length, device=x.device) + position_offset
-        k_positions = torch.arange(0, context_length, device=x.device) + position_offset
+        q_positions = torch.arange(query_start, query_start + sequence_length, device=x.device)
+        k_positions = torch.arange(0, context_length, device=x.device)
 
         q = self.positional_encoder(q, q_positions)
         k = self.positional_encoder(k, k_positions)
 
         # Scaled Dot Product Attention
         values, _ = self.scaled_dot_product(q, k, v)
-        
+
         values = values.permute(0, 2, 1, 3)  # (batch, seq_len, heads, head_dim)
         values = values.reshape(batch_size, sequence_length, self.num_heads * self.head_dim)
 
         out = self.linear_layer(values)
         new_memory = (k_new.detach(), v_new.detach())
-        
+
         return out, new_memory

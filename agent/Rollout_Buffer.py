@@ -91,5 +91,6 @@ class RolloutBuffer:
         self.rewards = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
         self.critic_values = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
         self.dones = torch.zeros(self.rollout_size, dtype=torch.bool, device=self.device)
+
         self.advantages = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
         self.returns = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)

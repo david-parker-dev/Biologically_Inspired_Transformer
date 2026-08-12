@@ -10,35 +10,44 @@ from models.Model import Model
 class Agent:
     def __init__(self, config, num_actions, env, episode_max_length):
 
+        # Passed Parameters
         self.env = env
         self.config = config
         self.num_actions = num_actions
         self.episode_max_length = episode_max_length
 
+        # Object Setup
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
         self.Network = Model(num_actions, config=self.config).to(self.device)
-
         self.Optimiser = optim.AdamW(self.Network.parameters(), lr=self.config.LEARNING_RATE, amsgrad=False)
-
         self.writer = SummaryWriter(log_dir="runs/" + self.config.RUN_NAME)
         self.RolloutBuffer = RolloutBuffer(self.config, image_shape=(config.INPUT_GRID_SIZE, config.INPUT_GRID_SIZE, 3))
-        self.global_step = 0
-
+        self.memory = None
         self.eval_env = gym.make(self.config.ENV_NAME)
 
-        self.observation, _ = self.env.reset(seed=self.config.SEED)
+        # Counters
+        self.global_step = 0
         self.episode_timestep = 0
         self.episode_return = 0.0
-        self.memory = None
+
+        # Starting Observation
+        self.observation, _ = self.env.reset(seed=self.config.SEED)
 
     def training(self):
+
+        # PPO Iteration Loop
         for iteration in range(self.config.NUMBER_ITERATIONS):
 
+            # Collect Samples
             bootstrap_value, last_done = self.fill_rollout()
+
+            # Compute Training Numebers
             self.RolloutBuffer.compute_gae(bootstrap_value, last_done)
+
+            # Update Model
             self.update()
 
+            # Evaluate Current Model Performance
             if iteration % self.config.EVAL_FREQUENCY == 0:
                 self.evaluate()
 

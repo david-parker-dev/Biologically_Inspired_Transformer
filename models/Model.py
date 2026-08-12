@@ -79,7 +79,7 @@ class Model(nn.Module):
 
         new_memory = []
         for block, past_input in zip(self.blocks, memory):
-            x, block_memory = block(x, past_input=past_input, position_offset=position_offset)
+            x, block_memory = block(x, past_input=past_input)
             new_memory.append(block_memory)
 
         return self.Critic(x), self.Actor(x), new_memory
