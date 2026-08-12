@@ -1,8 +1,7 @@
 import torch
 import torch.nn.functional as F
-from torch import nn
-
 from models.GTrXL import GTrXL_Block
+from torch import nn
 
 
 class Actor(nn.Module):
@@ -20,6 +19,14 @@ class Critic(nn.Module):
 
     def forward(self, x):
         return self.critic(x)
+
+class MLR_Objective(nn.Module):
+    def __init__(self, embedd_dim):
+        super().__init__()
+        self.projection = nn.Linear(embedd_dim, 1)
+
+    def forward(self, x):
+        return self.projection(x)
 
 class Encoder(nn.Module):
     def __init__(self, config):
@@ -58,8 +65,6 @@ class Encoder(nn.Module):
         combined = torch.cat([image_features, direction_features], dim=-1)
         return self.combined_projection(combined)
 
-
-
 class Model(nn.Module):
     def __init__(self, num_actions, config):
         super().__init__()
@@ -69,8 +74,9 @@ class Model(nn.Module):
         self.blocks = nn.ModuleList([ GTrXL_Block(config) for _ in range(config.MODEL_LAYERS)])
         self.Actor = Actor(config.MODEL_EMBED_SIZE, num_actions)
         self.Critic = Critic(config.MODEL_EMBED_SIZE)
+        self.MLR_Objective = MLR_Objective(config.MODEL_EMBED_SIZE)
 
-    def forward(self, image, direction, memory=None, position_offset=0):
+    def forward(self, image, direction, memory=None):
 
         x = self.Encoder(image, direction)
 
@@ -82,4 +88,4 @@ class Model(nn.Module):
             x, block_memory = block(x, past_input=past_input)
             new_memory.append(block_memory)
 
-        return self.Critic(x), self.Actor(x), new_memory
+        return self.Critic(x), self.Actor(x), self.MLR_Objective(x), new_memory
