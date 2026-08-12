@@ -84,13 +84,12 @@ class Gated_Residual_Layer(nn.Module):
         return ((1 - z) * Residual_Connection) + (z * h)
 
 class MultiheadAttention(nn.Module):
-    def __init__(self,config, enable_mask, enable_sparsity = False):
+    def __init__(self,config, enable_sparsity = False):
         super().__init__()
 
         self.model_dim_size = config.MODEL_EMBED_SIZE
         self.num_heads = config.MODEL_NUM_HEADS
         self.head_dim = self.model_dim_size // self.num_heads
-        self.enable_mask = enable_mask
         self.enable_sparsity = enable_sparsity
         self.max_memory_length = config.MAX_MEMORY_LENGTH
 
@@ -145,29 +144,28 @@ class MultiheadAttention(nn.Module):
 
         batch_size, sequence_length, _ = x.size()
 
+        # Merge Context & Input
+        if past_input is not None:
+            full_input = torch.cat([past_input, x], dim=-2)
+        else:
+            full_input = x
+
+        # Trim Full Sequence to max size if required
+        max_context_length = self.max_memory_length + sequence_length
+        if full_input.size(-2) > max_context_length:
+            full_input = full_input[:, -max_context_length:, :]
+
+        context_length = full_input.size(-2)
+
         # Compute Values
         q = self.q_layer(x)
-        k_new = self.k_layer(x)
-        v_new = self.v_layer(x)
+        k = self.k_layer(full_input)
+        v = self.v_layer(full_input)
 
         # Split Each into Head Shapes
         q = self.split_heads(q, batch_size, sequence_length)
-        k_new  = self.split_heads(k_new, batch_size, sequence_length)
-        v_new  = self.split_heads(v_new, batch_size, sequence_length)
-
-        # Concatenate past input with current input
-        if past_input is not None:
-            past_k, past_v = past_input
-            k = torch.cat([past_k, k_new], dim=-2)
-            v = torch.cat([past_v, v_new], dim=-2)
-        else:
-            k = k_new
-            v = v_new
-
-        # Trim input size to max memory length
-        if k.size(-2) > self.max_memory_length + sequence_length:
-            k = k[:, :, -(self.max_memory_length + sequence_length):, :]
-            v = v[:, :, -(self.max_memory_length + sequence_length):, :]
+        k = self.split_heads(k, batch_size, context_length)
+        v = self.split_heads(v, batch_size, context_length)
 
         context_length = k.size(-2)
         query_start = context_length - sequence_length
@@ -185,6 +183,6 @@ class MultiheadAttention(nn.Module):
         values = values.reshape(batch_size, sequence_length, self.num_heads * self.head_dim)
 
         out = self.linear_layer(values)
-        new_memory = (k_new.detach(), v_new.detach())
+        new_memory = full_input[:, -self.max_memory_length:, :].detach()
 
         return out, new_memory

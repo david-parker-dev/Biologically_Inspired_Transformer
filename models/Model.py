@@ -20,14 +20,6 @@ class Critic(nn.Module):
     def forward(self, x):
         return self.critic(x)
 
-class MLR_Objective(nn.Module):
-    def __init__(self, embedd_dim):
-        super().__init__()
-        self.projection = nn.Linear(embedd_dim, 1)
-
-    def forward(self, x):
-        return self.projection(x)
-
 class Encoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -74,18 +66,19 @@ class Model(nn.Module):
         self.blocks = nn.ModuleList([ GTrXL_Block(config) for _ in range(config.MODEL_LAYERS)])
         self.Actor = Actor(config.MODEL_EMBED_SIZE, num_actions)
         self.Critic = Critic(config.MODEL_EMBED_SIZE)
-        self.MLR_Objective = MLR_Objective(config.MODEL_EMBED_SIZE)
 
     def forward(self, image, direction, memory=None):
 
         x = self.Encoder(image, direction)
 
         if memory is None:
-                memory = [None] * len(self.blocks)
+            memory = [None] * len(self.blocks)
 
+        # Non Masked Path
+        input = x
         new_memory = []
         for block, past_input in zip(self.blocks, memory):
-            x, block_memory = block(x, past_input=past_input)
+            input, block_memory = block(input, past_input=past_input)
             new_memory.append(block_memory)
 
-        return self.Critic(x), self.Actor(x), self.MLR_Objective(x), new_memory
+        return self.Critic(input), self.Actor(input), new_memory

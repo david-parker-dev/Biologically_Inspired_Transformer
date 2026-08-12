@@ -5,13 +5,12 @@ from dataclasses import dataclass
 class config:
 
     # TensorBoard
-    RUN_NAME: str = "Sparse_Env"
+    RUN_NAME: str = "Sparse"
 
     # Ablation
     ENABLE_SPARSITY: bool = True
 
     # Environment
-    # ENV_NAME: str = "MiniGrid-Empty-8x8-v0"
     ENV_NAME: str = "MiniGrid-MemoryS13-v0"
     EPISODE_MAX_LENGTH: int = 845
     SEED: int = 7

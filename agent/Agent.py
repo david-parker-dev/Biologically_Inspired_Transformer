@@ -1,9 +1,10 @@
 import gymnasium as gym
 import torch
-from agent.Rollout_Buffer import RolloutBuffer
-from models.Model import Model
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
+
+from agent.Rollout_Buffer import RolloutBuffer
+from models.Model import Model
 
 
 class Agent:
@@ -88,6 +89,14 @@ class Agent:
 
             next_observation, reward, terminated, truncated, _ = self.env.step(action.item())
 
+            logged_reward = reward
+            if truncated and not terminated:
+                saved_memory = self.memory
+                with torch.no_grad():
+                    _, _, truncation_value = self.select_action(next_observation)
+                self.memory = saved_memory
+                reward = reward + self.config.GAMMA * truncation_value.item()
+
             done = terminated or truncated
             last_done = done
 
@@ -97,7 +106,7 @@ class Agent:
                                       action, reward, critic_value, log_probability, done)
 
             self.episode_timestep += 1
-            self.episode_return += reward
+            self.episode_return += logged_reward
             self.global_step += 1
 
             if done or self.episode_timestep >= self.episode_max_length:
@@ -116,8 +125,10 @@ class Agent:
         if last_done:
             bootstrap_value = 0.0
         else:
+            saved_memory = self.memory
             with torch.no_grad():
-                _, _, bootstrap_value = self.select_action(self.observation)
+                _, _, bootstrap_value = self.select_action(self.observation, eval=True)
+            self.memory = saved_memory
 
         return bootstrap_value, last_done
 
@@ -163,7 +174,9 @@ class Agent:
                 value_loss_clipped = (value_clipped - batch_returns) ** 2
                 value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
 
-                total_loss = (policy_loss + self.config.VALUE_LOSS_COEFFICIENT * value_loss - self.config.ENTROPY_COEFFICIENT * entropy_loss)
+                total_loss = (  policy_loss
+                                + self.config.VALUE_LOSS_COEFFICIENT * value_loss
+                                - self.config.ENTROPY_COEFFICIENT * entropy_loss)
 
                 self.Optimiser.zero_grad()
                 total_loss.backward()

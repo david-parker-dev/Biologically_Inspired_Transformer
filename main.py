@@ -1,8 +1,10 @@
 import random
 
 import gymnasium as gym
+import minigrid
 import numpy as np
 import torch
+
 from agent.Agent import Agent
 from config import config as Config
 
