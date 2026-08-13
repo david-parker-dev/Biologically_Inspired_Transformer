@@ -18,7 +18,7 @@ class GTrXL_Block(nn.Module):
         embed_dim = config.MODEL_EMBED_SIZE
         enable_sparsity = config.ENABLE_SPARSITY
 
-        self.an1 = MultiheadAttention(config, enable_mask=True, enable_sparsity= enable_sparsity)
+        self.an1 = MultiheadAttention(config, enable_sparsity=enable_sparsity)
 
         self.activation = F.gelu
 

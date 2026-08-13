@@ -1,4 +1,5 @@
 import gymnasium as gym
+import numpy as np
 import torch
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
@@ -26,12 +27,13 @@ class Agent:
         self.eval_env = gym.make(self.config.ENV_NAME)
 
         # Counters
+        self.episode_timestep = np.zeros(self.config.NUM_ENVS, dtype=np.int64)
+        self.episode_return = np.zeros(self.config.NUM_ENVS, dtype=np.float64)
         self.global_step = 0
-        self.episode_timestep = 0
-        self.episode_return = 0.0
 
         # Starting Observation
-        self.observation, _ = self.env.reset(seed=self.config.SEED)
+        seeds = [self.config.SEED + i for i in range(self.config.NUM_ENVS)]
+        self.observation, _ = self.env.reset(seed=seeds)
 
     def training(self):
 
@@ -51,19 +53,16 @@ class Agent:
             if iteration % self.config.EVAL_FREQUENCY == 0:
                 self.evaluate()
 
-    def select_action(self, observation, eval=False):
+    def select_action(self, observation, memory, eval=False):
 
-        # Add batch and sequence dimensions: (H, W, C) -> (1, 1, H, W, C)
+        # Add batch and sequence dimensions
         image = torch.as_tensor(observation["image"], dtype=torch.float32, device=self.device)
-        image = image.unsqueeze(0).unsqueeze(0)
-
-        # Add batch and sequence dimensions: scalar -> (1, 1)
         direction = torch.as_tensor(observation["direction"], dtype=torch.int64, device=self.device)
-        direction = direction.reshape(1, 1)
+        image = image.unsqueeze(1)
+        direction = direction.unsqueeze(1)
 
         with torch.no_grad():
-            critic_value, actor_logits, new_memory = self.Network(image, direction, memory=self.memory)
-            self.memory = new_memory
+            critic_value, actor_logits, new_memory = self.Network(image, direction, memory=memory)
 
             critic_value = critic_value[:, -1, :].squeeze(-1)
             actor_logits = actor_logits[:, -1, :]
@@ -77,7 +76,7 @@ class Agent:
 
             log_probability = distribution.log_prob(action)
 
-            return action, log_probability, critic_value
+            return action, log_probability, critic_value, new_memory
 
     def fill_rollout(self):
 
@@ -85,19 +84,27 @@ class Agent:
 
         for timestep in range(self.config.ROLLOUT_SIZE):
 
-            action, log_probability, critic_value = self.select_action(self.observation)
+            action, log_probability, critic_value, self.memory = self.select_action(self.observation, self.memory)
 
-            next_observation, reward, terminated, truncated, _ = self.env.step(action.item())
+            next_observation, reward, terminated, truncated, infos = self.env.step(action.cpu().numpy())
 
-            logged_reward = reward
-            if truncated and not terminated:
-                saved_memory = self.memory
+            logged_reward = reward.copy()
+
+            if truncated.any():
+
+                indices = np.where(truncated & (~terminated))[0]
+                truncated_obs = {
+                    "image": np.stack([infos["final_obs"][i]["image"] for i in indices]),
+                    "direction": np.array([infos["final_obs"][i]["direction"] for i in indices]),
+                }
+                truncated_memory = [layer_memory[indices] for layer_memory in self.memory]
+
                 with torch.no_grad():
-                    _, _, truncation_value = self.select_action(next_observation)
-                self.memory = saved_memory
-                reward = reward + self.config.GAMMA * truncation_value.item()
+                    _, _, truncation_value, _ = self.select_action(truncated_obs, truncated_memory)
 
-            done = terminated or truncated
+                reward[indices] = reward[indices] + self.config.GAMMA * truncation_value.cpu().numpy()
+
+            done = terminated | truncated
             last_done = done
 
             self.RolloutBuffer.store(timestep,
@@ -109,26 +116,18 @@ class Agent:
             self.episode_return += logged_reward
             self.global_step += 1
 
-            if done or self.episode_timestep >= self.episode_max_length:
+            for i in range(self.config.NUM_ENVS):
+                if done[i]:
+                    self.writer.add_scalar("rollout/episode_length_vs_steps", self.episode_timestep[i], self.global_step)
+                    self.writer.add_scalar("rollout/episode_return_vs_steps", self.episode_return[i], self.global_step)
+                    self.episode_timestep[i] = 0
+                    self.episode_return[i] = 0.0
 
-                self.writer.add_scalar("rollout/episode_length_vs_steps", self.episode_timestep, self.global_step, )
-                self.writer.add_scalar("rollout/episode_return_vs_steps", self.episode_return, self.global_step, )
+            self.observation = next_observation
 
-                self.observation, _ = self.env.reset()
-                self.episode_timestep = 0
-                self.episode_return = 0.0
-                self.memory = None
-
-            else:
-                self.observation = next_observation
-
-        if last_done:
-            bootstrap_value = 0.0
-        else:
-            saved_memory = self.memory
-            with torch.no_grad():
-                _, _, bootstrap_value = self.select_action(self.observation, eval=True)
-            self.memory = saved_memory
+        with torch.no_grad():
+            _, _, raw_bootstrap_value, _ = self.select_action(self.observation, self.memory, eval=True)
+        bootstrap_value = raw_bootstrap_value * torch.as_tensor(~last_done, dtype=torch.float32, device=self.device)
 
         return bootstrap_value, last_done
 
@@ -150,10 +149,6 @@ class Agent:
                 batch_returns       = returns.reshape(-1)
 
                 new_values, actor_logits, memory = self.Network(images, directions, memory=memory)
-
-                if dones.any():
-                    memory = None
-
                 actor_logits = actor_logits.reshape(-1, self.num_actions)
                 new_values = new_values.reshape(-1)
 
@@ -199,8 +194,6 @@ class Agent:
         episode_lengths = []
         episode_successes = []
 
-        training_memory = self.memory
-
         for episode in range(self.config.EVAL_EPISODES):
             if episode == 0:
                 observation, _ = self.eval_env.reset(seed=self.config.EVAL_SEED)
@@ -210,10 +203,14 @@ class Agent:
             done = False
             total_reward = 0.0
             steps = 0
-            self.memory = None
+            eval_memory = None
 
             while not done and steps < self.episode_max_length:
-                action, _, _ = self.select_action(observation, eval=True)
+                batched_observation = {
+                    "image": np.expand_dims(observation["image"], axis=0),
+                    "direction": np.expand_dims(observation["direction"], axis=0),
+                    }
+                action, _, _, eval_memory = self.select_action(batched_observation, eval_memory, eval=True)
                 observation, reward, terminated, truncated, _ = self.eval_env.step(action.item())
                 done = terminated or truncated
                 total_reward += reward
@@ -222,8 +219,6 @@ class Agent:
             episode_returns.append(total_reward)
             episode_lengths.append(steps)
             episode_successes.append(1.0 if (terminated and total_reward > 0) else 0.0)
-
-        self.memory = training_memory
 
         returns_tensor = torch.tensor(episode_returns)
         average_return = returns_tensor.mean().item()

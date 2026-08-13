@@ -15,18 +15,26 @@ def set_RNG(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def make_env(env_name, seed, index):
+    def thunk():
+        env = gym.make(env_name)
+        return env
+    return thunk
 
 
 def main():
     config = Config()
-    env = gym.make(config.ENV_NAME)
+    # env = gym.make(config.ENV_NAME)
+    envs = gym.vector.SyncVectorEnv(
+            [make_env(config.ENV_NAME, config.SEED, i) for i in range(config.NUM_ENVS)],
+            autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,)
 
     set_RNG(config.SEED)
 
     agent = Agent(
             config=config,
-            num_actions=env.action_space.n,
-            env=env,
+            num_actions=envs.single_action_space.n,
+            env=envs,
             episode_max_length=config.EPISODE_MAX_LENGTH,
         )
 

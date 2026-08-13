@@ -5,16 +5,18 @@ from dataclasses import dataclass
 class config:
 
     # TensorBoard
-    RUN_NAME: str = "Sparse"
+    RUN_NAME: str = "Step 4 - Dense"
 
     # Ablation
-    ENABLE_SPARSITY: bool = True
+    ENABLE_SPARSITY: bool = False
 
     # Environment
+    NUM_ENVS: int = 8
     ENV_NAME: str = "MiniGrid-MemoryS13-v0"
     EPISODE_MAX_LENGTH: int = 845
     SEED: int = 7
     EVAL_SEED: int = 212
+    ROLLOUT_SIZE: int = 500
 
     # Encoder
     INPUT_CONV_CHANNELS: int = 16
@@ -38,7 +40,6 @@ class config:
     LEARNING_RATE: float = 10 ** -5
     GAMMA: float = 0.99
     GAE_LAMBDA: float = 0.95
-    ROLLOUT_SIZE: int = 4000
     SEQUENCE_LENGTH: int = 100
     NUMBER_ITERATIONS: int = 1000
     EPOCHS: int = 3
