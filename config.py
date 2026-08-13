@@ -4,23 +4,7 @@ from dataclasses import dataclass, field
 @dataclass
 class config:
 
-    # TensorBoard
-<<<<<<< HEAD
-<<<<<<< HEAD
-    RUN_NAME: str = "Cartpole"
-    EVAL_FREQUENCY: int = 5
-
-    # Trunk / Model Architecture
-    MODEL_INPUT_SIZE: int = 4
-    MODEL_NUM_ACTIONS: int = 2
-    MODEL_EMBED_SIZE: int = 512
-    MODEL_LAYERS: int = 3
-    MAX_MEMORY_LENGTH: int = 64
-=======
     RUN_NAME: str = "Step 4 - Dense"
-=======
-    RUN_NAME: str = "13/08 - Sparse"
->>>>>>> origin/Minigrid-Environment
 
     # Ablation
     ENABLE_SPARSITY: bool = True
@@ -38,6 +22,12 @@ class config:
     INPUT_DIRECTION_EMBED_DIM: int = 4
     INPUT_GRID_SIZE: int = 7
     INPUT_NUM_DIRECTIONS: int = 4
+    INPUT_NUM_OBJECTS: int = 11
+    INPUT_NUM_COLOURS: int = 6
+    INPUT_NUM_STATES: int = 3
+    INPUT_OBJECT_EMBED_DIM: int = 8
+    INPUT_COLOUR_EMBED_DIM: int = 4
+    INPUT_STATE_EMBED_DIM: int = 4
 
     # Trunk / Model Architecture
     MODEL_EMBED_SIZE: int = 160
@@ -50,10 +40,9 @@ class config:
     # Evaluation
     EVAL_FREQUENCY: int = 5
     EVAL_EPISODES: int = 10
->>>>>>> Minigrid-Environment
 
     # PPO
-    LEARNING_RATE: float = 10 ** -5
+    LEARNING_RATE: float = 3e-4
     GAMMA: float = 0.99
     GAE_LAMBDA: float = 0.95
     SEQUENCE_LENGTH: int = 100
