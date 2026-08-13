@@ -1,10 +1,11 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from agent.Rollout_Buffer import RolloutBuffer
-from models.Model import Model
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
+
+from agent.Rollout_Buffer import RolloutBuffer
+from models.Model import Model
 
 
 class Agent:
@@ -96,6 +97,7 @@ class Agent:
             logged_reward = reward.copy()
 
             truncation_only = truncated & (~terminated)
+
             if truncation_only.any():
                 indices = np.where(truncation_only)[0]
                 truncated_obs = {
@@ -116,6 +118,10 @@ class Agent:
                                       self.observation["image"],
                                       self.observation["direction"],
                                       action, reward, critic_value, log_probability, done)
+
+            if done.any():
+                keep = torch.as_tensor(~done, dtype=torch.float32, device=self.device).view(-1, 1, 1)
+                self.memory = [layer_memory * keep for layer_memory in self.memory]
 
             self.episode_timestep += 1
             self.episode_return += logged_reward
@@ -140,12 +146,11 @@ class Agent:
 
         for epoch in range(self.config.EPOCHS):
 
-            memory = None
             batches = self.RolloutBuffer.get_sequence_batches(sequence_length=self.config.SEQUENCE_LENGTH)
 
             for batch in batches:
 
-                images, directions, actions, old_log_probs, advantages, returns, old_values, _ = batch
+                images, directions, actions, old_log_probs, advantages, returns, old_values, dones = batch
 
                 batch_actions       = actions.reshape(-1)
                 batch_old_log_probs = old_log_probs.reshape(-1)
@@ -153,7 +158,7 @@ class Agent:
                 batch_advantages    = advantages.reshape(-1)
                 batch_returns       = returns.reshape(-1)
 
-                new_values, actor_logits, memory = self.Network(images, directions, memory=memory)
+                new_values, actor_logits, _ = self.Network(images, directions, memory=None, dones=dones)
                 actor_logits = actor_logits.reshape(-1, self.num_actions)
                 new_values = new_values.reshape(-1)
 

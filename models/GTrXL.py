@@ -31,11 +31,11 @@ class GTrXL_Block(nn.Module):
         self.fc1 = nn.Linear(embed_dim, config.MODEL_HIDDEN_DIM)
         self.fc2 = nn.Linear(config.MODEL_HIDDEN_DIM, embed_dim)
 
-    def forward(self, x, past_input=None):
+    def forward(self, x, past_input=None, dones=None):
 
         # Stage 1 - Multi Head Self Attention
         x_output = self.layer_norm_1(x)
-        x_output, new_memory = self.an1(x_output, past_input=past_input)
+        x_output, new_memory = self.an1(x_output, past_input=past_input, dones=dones)
         x = self.Residual_Gate_1(x, x_output)
 
         # Stage 2 - Multi Layer Perceptron
@@ -84,6 +84,7 @@ class Gated_Residual_Layer(nn.Module):
         return ((1 - z) * Residual_Connection) + (z * h)
 
 class MultiheadAttention(nn.Module):
+    alpha: nn.Parameter
     def __init__(self,config, enable_sparsity = False):
         super().__init__()
 
@@ -107,10 +108,24 @@ class MultiheadAttention(nn.Module):
         if self.enable_sparsity == True:
             self.alpha = nn.Parameter(torch.full((self.num_heads,), -0.4363))
 
-    def build_causal_mask(self, query_length, cache_length, device):
+    def build_causal_mask(self, query_length, cache_length, device, dones=None):
         cache_mask = torch.zeros(query_length, cache_length, device=device)
         new_chunk_mask = torch.triu(torch.full((query_length, query_length), float('-inf'), device=device), diagonal=1)
-        return torch.cat([cache_mask, new_chunk_mask], dim=-1)
+
+        # Mask Old Episode Timesteps
+        if dones is not None:
+            segment_id = torch.cumsum(dones.float(), dim=1)
+            segment_id = torch.cat([torch.zeros_like(segment_id[:, :1]), segment_id[:, :-1]], dim=1)
+
+            same_segment = segment_id.unsqueeze(2) == segment_id.unsqueeze(1)
+            segment_mask = torch.where(same_segment, 0.0, float('-inf'))
+            new_chunk_mask = new_chunk_mask.unsqueeze(0) + segment_mask
+            cache_mask = cache_mask.unsqueeze(0).expand(dones.size(0), -1, -1)
+
+        mask = torch.cat([cache_mask, new_chunk_mask], dim=-1)
+        if mask.dim() == 2: return mask.unsqueeze(0).unsqueeze(0)
+
+        return mask.unsqueeze(1)
 
     def split_heads(self, x, batch_size, sequence_length):
         # Convert (batch, seq, d_model) to (batch, heads, seq, head_dim)
@@ -118,7 +133,7 @@ class MultiheadAttention(nn.Module):
         x = x.permute(0, 2, 1, 3)
         return x
 
-    def scaled_dot_product(self, q, k, v):
+    def scaled_dot_product(self, q, k, v, dones=None):
         # Scaling Factor
         d_k = q.size()[-1]
         query_length = q.size(-2)
@@ -129,7 +144,7 @@ class MultiheadAttention(nn.Module):
         dot_product = torch.matmul(q, k.transpose(-1, -2))
         scaled = dot_product / math.sqrt(d_k)
 
-        mask = self.build_causal_mask(query_length, cache_length, device=q.device)
+        mask = self.build_causal_mask(query_length, cache_length, device=q.device, dones=dones)
         scaled = scaled + mask
 
         if self.enable_sparsity:
@@ -143,7 +158,7 @@ class MultiheadAttention(nn.Module):
 
         return values, attention_weights
 
-    def forward(self, x, past_input=None):
+    def forward(self, x, past_input=None, dones=None):
 
         batch_size, sequence_length, _ = x.size()
 
@@ -180,7 +195,7 @@ class MultiheadAttention(nn.Module):
         k = self.positional_encoder(k, k_positions)
 
         # Scaled Dot Product Attention
-        values, _ = self.scaled_dot_product(q, k, v)
+        values, _ = self.scaled_dot_product(q, k, v, dones=dones)
 
         values = values.permute(0, 2, 1, 3)  # (batch, seq_len, heads, head_dim)
         values = values.reshape(batch_size, sequence_length, self.num_heads * self.head_dim)
