@@ -1,21 +1,21 @@
-import gymnasium as gym
 import numpy as np
 import torch
+import torch.nn.functional as F
+from agent.Rollout_Buffer import RolloutBuffer
+from models.Model import Model
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 
-from agent.Rollout_Buffer import RolloutBuffer
-from models.Model import Model
-
 
 class Agent:
-    def __init__(self, config, num_actions, env, episode_max_length):
+    def __init__(self, config, num_actions, env, eval_env, episode_max_length):
 
         # Passed Parameters
         self.env = env
         self.config = config
         self.num_actions = num_actions
         self.episode_max_length = episode_max_length
+        self.eval_env = eval_env
 
         # Object Setup
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -24,7 +24,6 @@ class Agent:
         self.writer = SummaryWriter(log_dir="runs/" + self.config.RUN_NAME)
         self.RolloutBuffer = RolloutBuffer(self.config, image_shape=(config.INPUT_GRID_SIZE, config.INPUT_GRID_SIZE, 3))
         self.memory = None
-        self.eval_env = gym.make(self.config.ENV_NAME)
 
         # Counters
         self.episode_timestep = np.zeros(self.config.NUM_ENVS, dtype=np.int64)
@@ -52,6 +51,12 @@ class Agent:
             # Evaluate Current Model Performance
             if iteration % self.config.EVAL_FREQUENCY == 0:
                 self.evaluate()
+
+                if self.config.ENABLE_SPARSITY:
+                    for layer_index, block in enumerate(self.Network.blocks):
+                        alphas = 1.0 + F.softplus(block.an1.alpha)
+                        for head_index, alpha in enumerate(alphas):
+                            self.writer.add_scalar(f"alpha/layer_{layer_index}_head_{head_index}", alpha.item(), self.global_step)
 
     def select_action(self, observation, memory, eval=False):
 
@@ -90,9 +95,9 @@ class Agent:
 
             logged_reward = reward.copy()
 
-            if truncated.any():
-
-                indices = np.where(truncated & (~terminated))[0]
+            truncation_only = truncated & (~terminated)
+            if truncation_only.any():
+                indices = np.where(truncation_only)[0]
                 truncated_obs = {
                     "image": np.stack([infos["final_obs"][i]["image"] for i in indices]),
                     "direction": np.array([infos["final_obs"][i]["direction"] for i in indices]),
@@ -114,7 +119,7 @@ class Agent:
 
             self.episode_timestep += 1
             self.episode_return += logged_reward
-            self.global_step += 1
+            self.global_step += self.config.NUM_ENVS
 
             for i in range(self.config.NUM_ENVS):
                 if done[i]:
@@ -140,7 +145,7 @@ class Agent:
 
             for batch in batches:
 
-                images, directions, actions, old_log_probs, advantages, returns, old_values, dones = batch
+                images, directions, actions, old_log_probs, advantages, returns, old_values, _ = batch
 
                 batch_actions       = actions.reshape(-1)
                 batch_old_log_probs = old_log_probs.reshape(-1)
@@ -190,40 +195,35 @@ class Agent:
                 self.writer.add_scalar("diagnostics/approx_kl", approx_kl.item(), self.global_step)
 
     def evaluate(self):
-        episode_returns = []
-        episode_lengths = []
-        episode_successes = []
+        eval_seeds = self.config.EVAL_SEEDS
+        observation, _ = self.eval_env.reset(seed=eval_seeds)
 
-        for episode in range(self.config.EVAL_EPISODES):
-            if episode == 0:
-                observation, _ = self.eval_env.reset(seed=self.config.EVAL_SEED)
-            else:
-                observation, _ = self.eval_env.reset()
+        n = self.config.EVAL_EPISODES
+        memory = None
+        finished = np.zeros(n, dtype=bool)
+        total_reward = np.zeros(n, dtype=np.float64)
+        steps = np.zeros(n, dtype=np.int64)
+        success = np.zeros(n, dtype=np.float64)
 
-            done = False
-            total_reward = 0.0
-            steps = 0
-            eval_memory = None
+        for step in range(self.episode_max_length):
+            if finished.all():
+                break
 
-            while not done and steps < self.episode_max_length:
-                batched_observation = {
-                    "image": np.expand_dims(observation["image"], axis=0),
-                    "direction": np.expand_dims(observation["direction"], axis=0),
-                    }
-                action, _, _, eval_memory = self.select_action(batched_observation, eval_memory, eval=True)
-                observation, reward, terminated, truncated, _ = self.eval_env.step(action.item())
-                done = terminated or truncated
-                total_reward += reward
-                steps += 1
+            action, _, _, memory = self.select_action(observation, memory, eval=True)
+            observation, reward, terminated, truncated, _ = self.eval_env.step(action.cpu().numpy())
 
-            episode_returns.append(total_reward)
-            episode_lengths.append(steps)
-            episode_successes.append(1.0 if (terminated and total_reward > 0) else 0.0)
+            active = ~finished
+            total_reward[active] += reward[active]
+            steps[active] += 1
 
-        returns_tensor = torch.tensor(episode_returns)
+            newly_done = (terminated | truncated) & active
+            success[newly_done] = (terminated[newly_done] & (total_reward[newly_done] > 0)).astype(np.float64)
+            finished |= newly_done
+
+        returns_tensor = torch.as_tensor(total_reward, dtype=torch.float32)
         average_return = returns_tensor.mean().item()
-        success_rate = sum(episode_successes) / len(episode_successes)
-        average_length = sum(episode_lengths) / len(episode_lengths)
+        success_rate = success.mean()
+        average_length = steps.mean()
 
         self.writer.add_scalar("eval/mean_return", average_return, self.global_step)
         self.writer.add_scalar("eval/std_return", returns_tensor.std().item(), self.global_step)

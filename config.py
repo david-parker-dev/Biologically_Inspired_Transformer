@@ -1,21 +1,21 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
 class config:
 
     # TensorBoard
-    RUN_NAME: str = "Step 4 - Dense"
+    RUN_NAME: str = "13/08 - Sparse"
 
     # Ablation
-    ENABLE_SPARSITY: bool = False
+    ENABLE_SPARSITY: bool = True
 
     # Environment
     NUM_ENVS: int = 8
     ENV_NAME: str = "MiniGrid-MemoryS13-v0"
     EPISODE_MAX_LENGTH: int = 845
     SEED: int = 7
-    EVAL_SEED: int = 212
+    EVAL_SEEDS: list = field(default_factory=lambda: [212 + i for i in range(10)])
     ROLLOUT_SIZE: int = 500
 
     # Encoder
