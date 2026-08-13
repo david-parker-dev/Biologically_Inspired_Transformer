@@ -99,7 +99,10 @@ class MultiheadAttention(nn.Module):
         self.v_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
         self.linear_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
 
-        self.positional_encoder = RotaryPositionalEmbeddings(self.head_dim)
+        self.positional_encoder = RotaryPositionalEmbeddings(
+            self.head_dim,
+            max_positions=self.max_memory_length + config.SEQUENCE_LENGTH + 1,
+        )
 
         if self.enable_sparsity == True:
             self.alpha = nn.Parameter(torch.full((self.num_heads,), -0.4363))
@@ -132,7 +135,7 @@ class MultiheadAttention(nn.Module):
         if self.enable_sparsity:
             alpha = 1.0 + F.softplus(self.alpha)
             alpha = alpha.view(1, self.num_heads, 1, 1)
-            attention_weights = entmax_bisect(scaled, alpha, dim=-1)
+            attention_weights = entmax_bisect(scaled, alpha, dim=-1, n_iter=15)
         else:
             attention_weights = F.softmax(scaled, dim=-1)
 
