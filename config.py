@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class config:
 
     # TensorBoard
+<<<<<<< HEAD
     RUN_NAME: str = "Cartpole"
     EVAL_FREQUENCY: int = 5
 
@@ -14,12 +15,43 @@ class config:
     MODEL_EMBED_SIZE: int = 512
     MODEL_LAYERS: int = 3
     MAX_MEMORY_LENGTH: int = 64
+=======
+    RUN_NAME: str = "Step 4 - Dense"
+
+    # Ablation
+    ENABLE_SPARSITY: bool = False
+
+    # Environment
+    NUM_ENVS: int = 8
+    ENV_NAME: str = "MiniGrid-MemoryS13-v0"
+    EPISODE_MAX_LENGTH: int = 845
+    SEED: int = 7
+    EVAL_SEED: int = 212
+    ROLLOUT_SIZE: int = 500
+
+    # Encoder
+    INPUT_CONV_CHANNELS: int = 16
+    INPUT_DIRECTION_EMBED_DIM: int = 4
+    INPUT_GRID_SIZE: int = 7
+    INPUT_NUM_DIRECTIONS: int = 4
+
+    # Trunk / Model Architecture
+    MODEL_EMBED_SIZE: int = 160
+    MODEL_HIDDEN_DIM: int = 640
+    MODEL_LAYERS: int = 4
+    MODEL_NUM_HEADS: int = 4
+    MAX_MEMORY_LENGTH: int = 126
+    GRU_GATE_INITIAL_BIAS: float = -2.0
+
+    # Evaluation
+    EVAL_FREQUENCY: int = 5
+    EVAL_EPISODES: int = 10
+>>>>>>> Minigrid-Environment
 
     # PPO
     LEARNING_RATE: float = 10 ** -5
     GAMMA: float = 0.99
     GAE_LAMBDA: float = 0.95
-    ROLLOUT_SIZE: int = 2000
     SEQUENCE_LENGTH: int = 100
     NUMBER_ITERATIONS: int = 1000
     EPOCHS: int = 3

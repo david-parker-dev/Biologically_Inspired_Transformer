@@ -2,6 +2,8 @@ import math
 
 import torch
 import torch.nn.functional as F
+from entmax import entmax_bisect
+from models.RoPE import RotaryPositionalEmbeddings
 from torch import nn
 
 
@@ -9,21 +11,25 @@ class GTrXL_Block(nn.Module):
     # Structure of a GTrXL Block
     # Features two stages of processing, and add gating to the residiual connections
 
-    def __init__(self, embed_dim, num_heads, hidden_dim, max_sequence_length, max_memory_length):
+    def __init__(self, config):
         super().__init__()
 
-        self.an1 = MultiheadAttention(embed_dim, num_heads, max_sequence_length=max_sequence_length, max_memory_length=max_memory_length, enable_mask=True)
+        self.config = config
+        embed_dim = config.MODEL_EMBED_SIZE
+        enable_sparsity = config.ENABLE_SPARSITY
+
+        self.an1 = MultiheadAttention(config, enable_sparsity=enable_sparsity)
 
         self.activation = F.gelu
 
         self.layer_norm_1 = nn.LayerNorm(embed_dim)
         self.layer_norm_2 = nn.LayerNorm(embed_dim)
 
-        self.Residual_Gate_1 = Gated_Residual_Layer(embed_dim)
-        self.Residual_Gate_2 = Gated_Residual_Layer(embed_dim)
+        self.Residual_Gate_1 = Gated_Residual_Layer(embed_dim, config.GRU_GATE_INITIAL_BIAS)
+        self.Residual_Gate_2 = Gated_Residual_Layer(embed_dim, config.GRU_GATE_INITIAL_BIAS)
 
-        self.fc1 = nn.Linear(embed_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, embed_dim)
+        self.fc1 = nn.Linear(embed_dim, config.MODEL_HIDDEN_DIM)
+        self.fc2 = nn.Linear(config.MODEL_HIDDEN_DIM, embed_dim)
 
     def forward(self, x, past_input=None):
 
@@ -39,10 +45,9 @@ class GTrXL_Block(nn.Module):
         x = self.Residual_Gate_2(x, x_output)
         return x, new_memory
 
-
 class Gated_Residual_Layer(nn.Module):
 
-    def __init__(self, embed_dim, initial_bias=-2.0):
+    def __init__(self, embed_dim, initial_bias):
         super().__init__()
 
         # Reset Weights -
@@ -78,52 +83,26 @@ class Gated_Residual_Layer(nn.Module):
         # GRU(x, y) = (1 − z) x + z⊙h
         return ((1 - z) * Residual_Connection) + (z * h)
 
-
 class MultiheadAttention(nn.Module):
-    def __init__(self, d_model, num_heads, enable_mask, max_sequence_length, max_memory_length):
+    def __init__(self,config, enable_sparsity = False):
         super().__init__()
 
-        self.d_model = d_model  # Model Embedding Size
-        self.num_heads = num_heads  # Number of Heads
-        self.head_dim = d_model // num_heads  # Dimensionality of each head
-        self.enable_mask = enable_mask  # Toggles Causal Mask
-        self.max_sequence_length = max_sequence_length
-        self.max_memory_length = max_memory_length
+        self.model_dim_size = config.MODEL_EMBED_SIZE
+        self.num_heads = config.MODEL_NUM_HEADS
+        self.head_dim = self.model_dim_size // self.num_heads
+        self.enable_sparsity = enable_sparsity
+        self.max_memory_length = config.MAX_MEMORY_LENGTH
 
-        # Query, Key, and Value Layers
-        self.q_layer = nn.Linear(d_model, d_model)
-        self.k_E_layer = nn.Linear(d_model, d_model) # W_k,E
-        self.v_layer = nn.Linear(d_model, d_model)
-        self.k_R_layer = nn.Linear(d_model, d_model, bias=False)
+        # Query, Key, Value, Final
+        self.q_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
+        self.k_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
+        self.v_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
+        self.linear_layer = nn.Linear(self.model_dim_size, self.model_dim_size)
 
-        # Positional Encoding Parameters
-        self.u = nn.Parameter(torch.empty(self.num_heads, 1, self.head_dim))
-        self.v = nn.Parameter(torch.empty(self.num_heads, 1, self.head_dim))
-        nn.init.xavier_uniform_(self.u)
-        nn.init.xavier_uniform_(self.v)
+        self.positional_encoder = RotaryPositionalEmbeddings(self.head_dim)
 
-        # Combines heads into final hidden layer
-        self.linear_layer = nn.Linear(d_model, d_model)
-
-    def _rel_shift(self, x, zero_triu=False):
-        batch_size, n_head, query_len, key_len = x.size()
-
-        # Pad x with a column of zeros
-        zero_pad = torch.zeros((batch_size, n_head, query_len, 1), device=x.device, dtype=x.dtype)
-        x_padded = torch.cat([zero_pad, x], dim=-1)
-
-        # Then reshape to offset the matrix
-        x_padded = x_padded.view(batch_size, n_head, key_len + 1, query_len)
-
-        # Slice off the top row and restore original shape
-        return x_padded[:, :, 1:].view_as(x)
-
-    def relative_positional_embeddings(self, seq_len, d_model, device):
-        inv_freq = 1 / (10000 ** (torch.arange(0.0, d_model, 2.0, device=device) / d_model))
-        pos_seq = torch.arange(seq_len - 1, -1, -1.0, device=device)
-        sinusoid_inp = torch.ger(pos_seq, inv_freq)
-        pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
-        return pos_emb.unsqueeze(1) # [seq_len, 1, d_model]
+        if self.enable_sparsity == True:
+            self.alpha = nn.Parameter(torch.full((self.num_heads,), -0.4363))
 
     def build_causal_mask(self, query_length, cache_length, device):
         cache_mask = torch.zeros(query_length, cache_length, device=device)
@@ -136,30 +115,27 @@ class MultiheadAttention(nn.Module):
         x = x.permute(0, 2, 1, 3)
         return x
 
-    def scaled_dot_product(self, q, k_E, k_R, v):
+    def scaled_dot_product(self, q, k, v):
         # Scaling Factor
         d_k = q.size()[-1]
         query_length = q.size(-2)
-        key_length = k_E.size(-2)
+        key_length = k.size(-2)
         cache_length = key_length - query_length
 
-        # Terms A & C - Content_based Addressing (Query + u)
-        word_query = q + self.u
-        AC = torch.matmul(word_query, k_E.transpose(-1, -2))
-
-        # Term B & D - Position-based addressing (Query + v)
-        position_query = q + self.v
-        BD = torch.matmul(position_query, k_R.transpose(-1, -2))
-        BD = self._rel_shift(BD)
-
         # Combine / Scale
-        scaled = (AC + BD) / math.sqrt(d_k)
+        dot_product = torch.matmul(q, k.transpose(-1, -2))
+        scaled = dot_product / math.sqrt(d_k)
 
-        if self.enable_mask is True:
-            mask = self.build_causal_mask(query_length, cache_length, device=q.device)
-            scaled = scaled + mask
+        mask = self.build_causal_mask(query_length, cache_length, device=q.device)
+        scaled = scaled + mask
 
-        attention_weights = F.softmax(scaled, dim=-1)
+        if self.enable_sparsity:
+            alpha = 1.0 + F.softplus(self.alpha)
+            alpha = alpha.view(1, self.num_heads, 1, 1)
+            attention_weights = entmax_bisect(scaled, alpha, dim=-1)
+        else:
+            attention_weights = F.softmax(scaled, dim=-1)
+
         values = torch.matmul(attention_weights, v)
 
         return values, attention_weights
@@ -168,41 +144,45 @@ class MultiheadAttention(nn.Module):
 
         batch_size, sequence_length, _ = x.size()
 
-        # Concatenate past input with current input
+        # Merge Context & Input
         if past_input is not None:
-            extended_input = torch.cat([past_input, x], dim=-2)
+            full_input = torch.cat([past_input, x], dim=-2)
         else:
-            extended_input = x
+            full_input = x
 
-        # Trim input size to max memory length
-        if extended_input.size(-2) > self.max_memory_length + sequence_length:
-            extended_input = extended_input[:, -(self.max_memory_length + sequence_length):, :]
+        # Trim Full Sequence to max size if required
+        max_context_length = self.max_memory_length + sequence_length
+        if full_input.size(-2) > max_context_length:
+            full_input = full_input[:, -max_context_length:, :]
 
-        context_length = extended_input.size(-2)
+        context_length = full_input.size(-2)
 
         # Compute Values
         q = self.q_layer(x)
-        k_E = self.k_E_layer(extended_input)
-        v = self.v_layer(extended_input)
-
-        # Relative Positional Key (k_R)
-        positional_embedding = self.relative_positional_embeddings(context_length, self.d_model, x.device)
-        k_R = self.k_R_layer(positional_embedding) # shape: [context_length, 1, d_model]
+        k = self.k_layer(full_input)
+        v = self.v_layer(full_input)
 
         # Split Each into Head Shapes
         q = self.split_heads(q, batch_size, sequence_length)
-        k_E = self.split_heads(k_E, batch_size, context_length)
-        k_R = self.split_heads(k_R, batch_size=1, sequence_length=context_length)
+        k = self.split_heads(k, batch_size, context_length)
         v = self.split_heads(v, batch_size, context_length)
 
+        context_length = k.size(-2)
+        query_start = context_length - sequence_length
+
+        q_positions = torch.arange(query_start, query_start + sequence_length, device=x.device)
+        k_positions = torch.arange(0, context_length, device=x.device)
+
+        q = self.positional_encoder(q, q_positions)
+        k = self.positional_encoder(k, k_positions)
+
         # Scaled Dot Product Attention
-        values, _ = self.scaled_dot_product(q, k_E, k_R, v)
+        values, _ = self.scaled_dot_product(q, k, v)
 
         values = values.permute(0, 2, 1, 3)  # (batch, seq_len, heads, head_dim)
         values = values.reshape(batch_size, sequence_length, self.num_heads * self.head_dim)
 
-        #out = self.linear_layer(values)
         out = self.linear_layer(values)
-        new_memory = extended_input.detach()
+        new_memory = full_input[:, -self.max_memory_length:, :].detach()
 
         return out, new_memory

@@ -5,23 +5,12 @@ class RolloutBuffer:
     # Collects State Transitions for PPO Training
     # Returns a rollout of state transitions
 
-    # Transition Design
-        # ((Obs_1, Obs_2, ..., Obs_x), action, log_probability, reward, critic_value, done)
-    # Rollout tensors have space
-        # observations      = [Rollout_Size, Observation_Size]
-        # actions           = [Rollout_Size]
-        # log_probabilties  = [Rollout_Size]
-        # rewards           = [Rollout_Size]
-        # critic_values     = [Rollout_Size]
-        # dones             = [Rollout_Size]
-
-    def __init__(self, config, obs_shape):
+    def __init__(self, config, image_shape):
 
         # Defines Device to be used - GPU(Cuda) or CPU
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Parameters
-        self.obs_shape = obs_shape
+        self.image_shape = image_shape
+        self.num_envs = config.NUM_ENVS
 
         # Hyperparameters
         self.gamma = config.GAMMA
@@ -31,19 +20,18 @@ class RolloutBuffer:
         self.clear()
 
 
-    def store(self, step, observation, action, reward, critic_value, log_probability, done):
-
-        # Append Collected Transition Values
-        self.observations[step]      = torch.as_tensor(observation, dtype=torch.float32, device=self.device)
-        self.actions[step]           = action
-        self.log_probabilities[step] = log_probability
-        self.rewards[step]           = reward
-        self.critic_values[step]     = critic_value
-        self.dones[step]             = done
+    def store(self, step, image, direction, action, reward, critic_value, log_probability, done):
+        self.images[step]            = torch.as_tensor(image, dtype=torch.float32, device=self.device)
+        self.directions[step]        = torch.as_tensor(direction, dtype=torch.int64, device=self.device)
+        self.actions[step]           = torch.as_tensor(action, dtype=torch.int64, device=self.device)
+        self.log_probabilities[step] = torch.as_tensor(log_probability, dtype=torch.float32, device=self.device)
+        self.rewards[step]           = torch.as_tensor(reward, dtype=torch.float32, device=self.device)
+        self.critic_values[step]     = torch.as_tensor(critic_value, dtype=torch.float32, device=self.device)
+        self.dones[step]             = torch.as_tensor(done, dtype=torch.bool, device=self.device)
 
     def compute_gae(self, bootstrap_value, last_done):
 
-        current_advantage = 0.0
+        current_advantage = torch.zeros(self.num_envs, device=self.device)
 
         for timestep in reversed(range(self.rollout_size)):
             if timestep == self.rollout_size - 1:
@@ -74,29 +62,30 @@ class RolloutBuffer:
 
         assert self.rollout_size % sequence_length == 0, "SEQUENCE_LENGTH must be divisable by ROLLOUT_SIZE"
 
-        # Normalise advantage over the rollout buffer
         normalised_advantage = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8)
 
         for start in range(0, self.rollout_size, sequence_length):
             end = start + sequence_length
 
             yield (
-                self.observations      [start:end].unsqueeze(0),
-                self.actions           [start:end].unsqueeze(0),
-                self.log_probabilities [start:end].unsqueeze(0),
-                normalised_advantage   [start:end].unsqueeze(0),
-                self.returns           [start:end].unsqueeze(0),
-                self.critic_values     [start:end].unsqueeze(0),
-                self.dones             [start:end].unsqueeze(0),
+                self.images            [start:end].transpose(0, 1),
+                self.directions        [start:end].transpose(0, 1),
+                self.actions           [start:end].transpose(0, 1),
+                self.log_probabilities [start:end].transpose(0, 1),
+                normalised_advantage   [start:end].transpose(0, 1),
+                self.returns           [start:end].transpose(0, 1),
+                self.critic_values     [start:end].transpose(0, 1),
+                self.dones             [start:end].transpose(0, 1),
             )
 
-
     def clear(self):
-        self.observations = torch.zeros(self.rollout_size, *self.obs_shape, dtype=torch.float32, device=self.device)
-        self.actions = torch.zeros(self.rollout_size, dtype=torch.int64, device=self.device)
-        self.log_probabilities = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
-        self.rewards = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
-        self.critic_values = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
-        self.dones = torch.zeros(self.rollout_size, dtype=torch.bool, device=self.device)
-        self.advantages = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
-        self.returns = torch.zeros(self.rollout_size, dtype=torch.float32, device=self.device)
+        self.images = torch.zeros(self.rollout_size, self.num_envs, *self.image_shape, dtype=torch.float32, device=self.device)
+        self.directions = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.int64, device=self.device)
+        self.actions = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.int64, device=self.device)
+        self.log_probabilities = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.float32, device=self.device)
+        self.rewards = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.float32, device=self.device)
+        self.critic_values = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.float32, device=self.device)
+        self.dones = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.bool, device=self.device)
+
+        self.advantages = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.float32, device=self.device)
+        self.returns = torch.zeros(self.rollout_size, self.num_envs, dtype=torch.float32, device=self.device)
